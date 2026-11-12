@@ -72,4 +72,39 @@ void main() {
     expect(find.text('답변 작성 중…'), findsNothing);
     expect(find.text('가짜 AI 응답: 실패 테스트'), findsNothing);
   });
+
+  testWidgets('실패한 메시지를 재시도하면 다시 응답을 요청한다', (WidgetTester tester) async {
+    var shouldFail = true;
+    final service = FakeAiService(
+      delay: const Duration(seconds: 1),
+      shouldFail: () => shouldFail,
+    );
+    await tester.pumpWidget(MaterialApp(home: ChatPage(service: service)));
+
+    await tester.enterText(find.byType(TextField), '재시도 테스트');
+    await tester.tap(find.byTooltip('전송'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+
+    expect(find.text('전송 실패'), findsOneWidget);
+    expect(find.text('재시도'), findsOneWidget);
+
+    // 이번에는 성공하도록 바꾸고 재시도한다.
+    shouldFail = false;
+    await tester.tap(find.text('재시도'));
+    await tester.pump();
+
+    expect(find.text('답변 작성 중…'), findsOneWidget);
+    expect(find.text('전송 실패'), findsNothing);
+    expect(find.text('재시도'), findsNothing);
+    expect(find.text('재시도 테스트'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+
+    expect(find.text('가짜 AI 응답: 재시도 테스트'), findsOneWidget);
+    expect(find.text('전송 실패'), findsNothing);
+    expect(find.text('재시도'), findsNothing);
+  });
 }

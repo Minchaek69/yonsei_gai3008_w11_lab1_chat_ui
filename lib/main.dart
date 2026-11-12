@@ -124,6 +124,8 @@ class _ChatPageState extends State<ChatPage> {
 
   /// 가짜 AI를 호출하고 성공/실패에 따라 메시지 상태를 바꾼다.
   Future<void> _requestReply(ChatMessage message) async {
+    if (_isWaitingForReply) return;
+
     final index = _messages.indexOf(message);
     if (index == -1) return;
 
@@ -181,7 +183,14 @@ class _ChatPageState extends State<ChatPage> {
                         final offset = _isWaitingForReply ? 1 : 0;
                         final message =
                             _messages[_messages.length - 1 - (index - offset)];
-                        return _Bubble(message: message);
+                        return _Bubble(
+                          message: message,
+                          onRetry:
+                              message.status == MessageStatus.failed &&
+                                  !_isWaitingForReply
+                              ? () => _requestReply(message)
+                              : null,
+                        );
                       },
                     ),
                   ),
@@ -255,9 +264,10 @@ class _ChatPageState extends State<ChatPage> {
 /// · maxWidth만 잡아 주면 긴 글은 자동으로 줄바꿈된다.
 /// ───────────────────────────────────────────────────────────────
 class _Bubble extends StatelessWidget {
-  const _Bubble({required this.message});
+  const _Bubble({required this.message, this.onRetry});
 
   final ChatMessage message;
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -308,6 +318,17 @@ class _Bubble extends StatelessWidget {
                   Text(
                     '전송 실패',
                     style: TextStyle(fontSize: 12, color: colorScheme.error),
+                  ),
+                  const SizedBox(width: 4),
+                  TextButton(
+                    onPressed: onRetry,
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      minimumSize: Size.zero,
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: const Text('재시도'),
                   ),
                 ],
               ),
