@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 
 void main() => runApp(const ChatLabApp());
@@ -19,24 +21,60 @@ class ChatLabApp extends StatelessWidget {
   }
 }
 
+/// 대화 한 줄의 전송 상태.
+enum MessageStatus { sending, sent, failed }
+
 /// 대화 한 줄. 서버 없이 화면만 만들기 위한 최소 모델.
 class ChatMessage {
-  const ChatMessage({required this.text, required this.isUser});
+  const ChatMessage({
+    required this.text,
+    required this.isUser,
+    this.status = MessageStatus.sent,
+  });
 
   final String text;
   final bool isUser;
+  final MessageStatus status;
+
+  ChatMessage copyWith({MessageStatus? status}) {
+    return ChatMessage(
+      text: text,
+      isUser: isUser,
+      status: status ?? this.status,
+    );
+  }
 }
 
-/// 서버 대신 지연 시간만 흉내 내는 가짜 AI.
+/// 서버 대신 지연과 가끔 발생하는 실패를 흉내 내는 가짜 AI.
 class FakeAiService {
-  FakeAiService({this.delay = const Duration(milliseconds: 900)});
+  FakeAiService({
+    this.delay = const Duration(milliseconds: 900),
+    double failureRate = 0.25,
+    Random? random,
+    bool Function()? shouldFail,
+  }) : _shouldFail =
+           shouldFail ?? _randomFailure(failureRate, random ?? Random());
 
   final Duration delay;
+  final bool Function() _shouldFail;
+
+  static bool Function() _randomFailure(double rate, Random random) {
+    return () => random.nextDouble() < rate;
+  }
 
   Future<String> replyTo(String prompt) async {
     await Future.delayed(delay);
+    if (_shouldFail()) throw const FakeAiException();
     return '가짜 AI 응답: $prompt';
   }
+}
+
+/// 가짜 AI 응답 실패를 나타내는 예외.
+class FakeAiException implements Exception {
+  const FakeAiException();
+
+  @override
+  String toString() => '가짜 AI 응답 실패';
 }
 
 class ChatPage extends StatefulWidget {
@@ -60,7 +98,9 @@ class _ChatPageState extends State<ChatPage> {
 
   final TextEditingController _controller = TextEditingController();
   late final FakeAiService _service = widget.service ?? FakeAiService();
-  bool _isWaitingForReply = false;
+
+  bool get _isWaitingForReply =>
+      _messages.any((message) => message.status == MessageStatus.sending);
 
   @override
   void dispose() {
@@ -74,17 +114,36 @@ class _ChatPageState extends State<ChatPage> {
     if (text.isEmpty || _isWaitingForReply) return;
 
     _controller.clear();
+    final message = ChatMessage(text: text, isUser: true);
     setState(() {
-      _messages.add(ChatMessage(text: text, isUser: true));
-      _isWaitingForReply = true;
+      _messages.add(message);
     });
 
-    final reply = await _service.replyTo(text);
-    if (!mounted) return;
+    await _requestReply(message);
+  }
+
+  /// 가짜 AI를 호출하고 성공/실패에 따라 메시지 상태를 바꾼다.
+  Future<void> _requestReply(ChatMessage message) async {
+    final index = _messages.indexOf(message);
+    if (index == -1) return;
+
     setState(() {
-      _messages.add(ChatMessage(text: reply, isUser: false));
-      _isWaitingForReply = false;
+      _messages[index] = message.copyWith(status: MessageStatus.sending);
     });
+
+    try {
+      final reply = await _service.replyTo(message.text);
+      if (!mounted) return;
+      setState(() {
+        _messages[index] = message.copyWith(status: MessageStatus.sent);
+        _messages.add(ChatMessage(text: reply, isUser: false));
+      });
+    } on FakeAiException {
+      if (!mounted) return;
+      setState(() {
+        _messages[index] = message.copyWith(status: MessageStatus.failed);
+      });
+    }
   }
 
   @override
@@ -204,28 +263,56 @@ class _Bubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final isUser = message.isUser;
+    final isFailed = message.status == MessageStatus.failed;
 
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        constraints: const BoxConstraints(maxWidth: 420),
-        decoration: BoxDecoration(
-          color: isUser
-              ? colorScheme.primaryContainer
-              : colorScheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: Text(
-          message.text,
-          style: TextStyle(
-            height: 1.35,
-            color: isUser
-                ? colorScheme.onPrimaryContainer
-                : colorScheme.onSurface,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: isUser
+            ? CrossAxisAlignment.end
+            : CrossAxisAlignment.start,
+        children: [
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            constraints: const BoxConstraints(maxWidth: 420),
+            decoration: BoxDecoration(
+              color: isUser
+                  ? colorScheme.primaryContainer
+                  : colorScheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Text(
+              message.text,
+              style: TextStyle(
+                height: 1.35,
+                color: isUser
+                    ? colorScheme.onPrimaryContainer
+                    : colorScheme.onSurface,
+              ),
+            ),
           ),
-        ),
+          if (isFailed)
+            Padding(
+              padding: EdgeInsets.only(
+                left: isUser ? 0 : 20,
+                right: isUser ? 20 : 0,
+                bottom: 4,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.error_outline, size: 16, color: colorScheme.error),
+                  const SizedBox(width: 4),
+                  Text(
+                    '전송 실패',
+                    style: TextStyle(fontSize: 12, color: colorScheme.error),
+                  ),
+                ],
+              ),
+            ),
+        ],
       ),
     );
   }

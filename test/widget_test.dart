@@ -25,14 +25,17 @@ void main() {
 
     expect(find.text('안녕하세요'), findsOneWidget);
 
-    // 가짜 AI 응답이 도착한다
+    // 가짜 AI 응답 대기(성공/실패는 무작위)가 끝난다
     await tester.pump(const Duration(seconds: 1));
     await tester.pump();
-    expect(find.text('가짜 AI 응답: 안녕하세요'), findsOneWidget);
+    expect(find.text('답변 작성 중…'), findsNothing);
   });
 
   testWidgets('응답을 기다리는 동안 타이핑 표시가 보인다', (WidgetTester tester) async {
-    final service = FakeAiService(delay: const Duration(seconds: 1));
+    final service = FakeAiService(
+      delay: const Duration(seconds: 1),
+      shouldFail: () => false,
+    );
     await tester.pumpWidget(MaterialApp(home: ChatPage(service: service)));
 
     await tester.enterText(find.byType(TextField), '로딩 테스트');
@@ -47,5 +50,26 @@ void main() {
 
     expect(find.text('답변 작성 중…'), findsNothing);
     expect(find.text('가짜 AI 응답: 로딩 테스트'), findsOneWidget);
+  });
+
+  testWidgets('가짜 AI 응답이 실패하면 전송 실패 상태가 보인다', (WidgetTester tester) async {
+    final service = FakeAiService(
+      delay: const Duration(seconds: 1),
+      shouldFail: () => true,
+    );
+    await tester.pumpWidget(MaterialApp(home: ChatPage(service: service)));
+
+    await tester.enterText(find.byType(TextField), '실패 테스트');
+    await tester.tap(find.byTooltip('전송'));
+    await tester.pump();
+
+    expect(find.text('답변 작성 중…'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+
+    expect(find.text('전송 실패'), findsOneWidget);
+    expect(find.text('답변 작성 중…'), findsNothing);
+    expect(find.text('가짜 AI 응답: 실패 테스트'), findsNothing);
   });
 }
