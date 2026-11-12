@@ -27,8 +27,23 @@ class ChatMessage {
   final bool isUser;
 }
 
+/// 서버 대신 지연 시간만 흉내 내는 가짜 AI.
+class FakeAiService {
+  FakeAiService({this.delay = const Duration(milliseconds: 900)});
+
+  final Duration delay;
+
+  Future<String> replyTo(String prompt) async {
+    await Future.delayed(delay);
+    return '가짜 AI 응답: $prompt';
+  }
+}
+
 class ChatPage extends StatefulWidget {
-  const ChatPage({super.key});
+  const ChatPage({super.key, this.service});
+
+  /// 테스트에서 지연 시간을 바꿔 끼울 수 있는 가짜 AI 서비스.
+  final FakeAiService? service;
 
   @override
   State<ChatPage> createState() => _ChatPageState();
@@ -40,13 +55,12 @@ class _ChatPageState extends State<ChatPage> {
     const ChatMessage(text: '오늘 뭐 배워?', isUser: true),
     const ChatMessage(text: 'AI 챗봇에 움직이는 응답을 붙입니다.', isUser: false),
     const ChatMessage(text: '타이핑 점은 왜 필요해요?', isUser: true),
-    const ChatMessage(
-      text: '응답이 1초를 넘으면 앱이 멈춘 것처럼 보이기 때문입니다.',
-      isUser: false,
-    ),
+    const ChatMessage(text: '응답이 1초를 넘으면 앱이 멈춘 것처럼 보이기 때문입니다.', isUser: false),
   ];
 
   final TextEditingController _controller = TextEditingController();
+  late final FakeAiService _service = widget.service ?? FakeAiService();
+  bool _isWaitingForReply = false;
 
   @override
   void dispose() {
@@ -54,15 +68,23 @@ class _ChatPageState extends State<ChatPage> {
     super.dispose();
   }
 
-  /// 서버 없이, 입력한 글을 사용자 말풍선으로 목록에 추가한다.
-  void _send() {
+  /// 서버 없이, 입력한 글을 목록에 추가하고 가짜 AI 응답을 기다린다.
+  Future<void> _send() async {
     final text = _controller.text.trim();
-    if (text.isEmpty) return;
+    if (text.isEmpty || _isWaitingForReply) return;
 
+    _controller.clear();
     setState(() {
       _messages.add(ChatMessage(text: text, isUser: true));
+      _isWaitingForReply = true;
     });
-    _controller.clear();
+
+    final reply = await _service.replyTo(text);
+    if (!mounted) return;
+    setState(() {
+      _messages.add(ChatMessage(text: reply, isUser: false));
+      _isWaitingForReply = false;
+    });
   }
 
   @override
@@ -89,10 +111,17 @@ class _ChatPageState extends State<ChatPage> {
                       padding: const EdgeInsets.symmetric(vertical: 8),
                       keyboardDismissBehavior:
                           ScrollViewKeyboardDismissBehavior.onDrag,
-                      itemCount: _messages.length,
+                      itemCount:
+                          _messages.length + (_isWaitingForReply ? 1 : 0),
                       itemBuilder: (context, index) {
+                        // reverse:true라 index 0이 맨 아래 — 가장 최신 자리에
+                        // 타이핑 표시를 먼저 보여 준다.
+                        if (_isWaitingForReply && index == 0) {
+                          return const _TypingBubble();
+                        }
+                        final offset = _isWaitingForReply ? 1 : 0;
                         final message =
-                            _messages[_messages.length - 1 - index];
+                            _messages[_messages.length - 1 - (index - offset)];
                         return _Bubble(message: message);
                       },
                     ),
@@ -144,7 +173,7 @@ class _ChatPageState extends State<ChatPage> {
                   ),
                   const SizedBox(width: 8),
                   IconButton.filled(
-                    onPressed: _send,
+                    onPressed: _isWaitingForReply ? null : _send,
                     tooltip: '전송',
                     icon: const Icon(Icons.send),
                   ),
@@ -196,6 +225,46 @@ class _Bubble extends StatelessWidget {
                 ? colorScheme.onPrimaryContainer
                 : colorScheme.onSurface,
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// AI가 응답을 만드는 동안 보여 주는 타이핑/로딩 말풍선.
+class _TypingBubble extends StatelessWidget {
+  const _TypingBubble();
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              '답변 작성 중…',
+              style: TextStyle(color: colorScheme.onSurfaceVariant),
+            ),
+          ],
         ),
       ),
     );
